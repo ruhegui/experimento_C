@@ -1,1 +1,0 @@
-# experimento_C

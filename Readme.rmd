@@ -1,0 +1,12 @@
+---
+title: "Report"
+author: "Guillermo Ruiz-Henares"
+date: "2024-11-11"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Experimento C
