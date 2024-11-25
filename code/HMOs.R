@@ -62,10 +62,10 @@ pairwisecomb = combn(levels(group), 2, function(x) paste(x[2], "-", x[1], sep = 
 contrast = makeContrasts(contrasts = pairwisecomb, levels=design)
 RESs = vector(length = 13L)
 names(RESs) = colnames(contrast[,c(1:9, 10, 34, 41, 32)])
-for (i in c(1:13)){
+for (i in c(1:length(RESs))){
   RESs[i] = topTags(glmQLFTest(fit, contrast = contrast[,i]), n = Inf)
 }
-DEGs = lapply(RESs, function(i) i %>% dplyr::filter(FDR <=0.05 ) %>% dplyr::select(description, gene_name, entrezid, logFC, PValue, FDR))
+DEGs = lapply(RESs, function(i) i %>% dplyr::filter(FDR <=0.05 ) %>% dplyr::select(description, gene_name, gene_id, entrezid, logFC, PValue, FDR))
 DEGs = DEGs[lapply(DEGs,nrow)>0]
 data = lapply(RESs, function(i) i %>%
          dplyr::mutate(DE = case_when(logFC > 0 & FDR <0.05 ~ "UP",
@@ -85,12 +85,12 @@ print(combined_plot)
 ggsave("results/volcano.png", scale = 2)
 
 logcpm = cpm(y, log=TRUE)
-rownames(logcpm) = y$genes$symbol #Nombre de genes
+rownames(logcpm) = y$genes$gene_name #Nombre de genes
 colnames(logcpm) =  paste(y$samples$group, y$samples$names, sep = "-")
 head(logcpm)
 
 DEG_selection = lapply(DEGs, function(i)
-  logcpm[na.omit(i$symbol),])
+  logcpm[na.omit(i$gene_name),])
 
 
 heatmap = function(data, samples, rows, title){
@@ -104,18 +104,12 @@ heatmap = function(data, samples, rows, title){
                      legend_labels = F,))
 }
 
-
-unlist(lapply(DEG_selection, nrow)))
-
-
-
 heatplots = lapply(names(DEG_selection[unlist(lapply(DEG_selection, is.matrix))]), function(name) {
   string = str_split_1(name, pattern = "-")
   cols = grep(paste0("\\b", string, "\\b", collapse = "|"), y$samples$group)
   heatmap(DEG_selection[[name]], cols, nrow(DEG_selection[[name]]), name)
   
 })
-
 combined_heatplot <- wrap_plots(heatplots)
 print(combined_heatplot)
 ggsave("results/heatmaps.png", scale = 2)
@@ -151,3 +145,90 @@ common = matrix[which(rowSums(matrix[,c(2:5)]) >1 ),]
 write.xlsx2(x = common, file = "results/comunes.xlsx", col.names = T, row.names = F)
 single =  matrix[which(rowSums(matrix[,c(2:5)]) == 1 ),]
 write.xlsx2(x = single, file = "results/singulares.xlsx", col.names = T, row.names = F)
+
+#Enrichment Analysis
+sig_down = lapply(DEGs, function(i) i %>% dplyr::filter(logFC < 0 ))
+sig_up = lapply(DEGs, function(i) i %>% dplyr::filter(logFC > 0 ))
+GSEA_data <- lapply(RESs, function(i) i %>% filter(!is.na(FDR)) %>%
+  arrange(desc(logFC)))
+log2FC = lapply(GSEA_data, function(i) i %>%
+  pull(logFC, name = gene_name))
+rm(GSEA_data)
+#GO enrichment on up-regulated genes. Genes that underwent differential expression testing
+ego <- enrichGO(gene= sig_up[[1]]$gene_name, #OVER-REPRESENTATION TEST
+                OrgDb= org.Mm.eg.db,
+                keyType = "SYMBOL",
+                ont= "BP",
+                universe=RESs[[1]]$gene_name)
+s_ego<-clusterProfiler::simplify(ego)
+dotplot(s_ego,showCategory=20,font.size=10,label_format=70)+
+  scale_size_continuous(range=c(1, 7))+
+  theme_minimal() +
+  ggtitle("GO Enrichment of up-regulated genes")
+s_ego %>% filter(p.adjust < 0.05) %>%
+  ggplot(showCategory = 20,
+         aes(GeneRatio, forcats::fct_reorder(Description, GeneRatio))) + 
+  geom_segment(aes(xend=0, yend = Description)) +
+  geom_point(aes(color=p.adjust, size = Count)) +
+  scale_color_viridis_c(guide=guide_colorbar(reverse=TRUE)) +
+  scale_size_continuous(range=c(1, 7)) +
+  theme_minimal() + 
+  xlab("Gene Ratio") +
+  ylab(NULL) + 
+  ggtitle("GO Enrichment of up-regulated genes")
+# color genes by log2 fold changes; create named vector
+foldchanges <- sig_up[[1]]$logFC
+names(foldchanges) <- sig_up[[1]]$gene_name
+
+## by default cnetplot gives the top 5 significant terms 
+#if we want to focus on specific terms we can subset our results
+s_ego2 <- s_ego
+s_ego2@result<-s_ego[c(1,2,3),]
+cnetplot(s_ego2, 
+         foldChange=foldchanges, 
+         shadowtext='gene',
+         cex_label_gene=0.25,
+         cex_label_category=0.5,
+         color_category="purple") 
+kgo <- enrichKEGG(gene = sig_up[[1]]$entrezid,
+                  organism = 'mmu',
+                  pvalueCutoff  = 0.05,
+                  universe = as.character(RESs[[1]]$entrezid)
+)
+kgo_df<-data.frame(kgo)
+mlist<-list(s_ego,kgo)
+names(mlist)<-c("GO-enrich","KEGG-enrich")
+mresult<-merge_result(mlist)
+dotplot(mresult,showCategory=10)
+##Merge Up & Down
+comparelist<-list(sig_down[[1]]$gene_id,sig_up[[1]]$gene_id)
+names(comparelist)<-c("down-regulated","up-regulated") 
+cclust<-compareCluster(geneCluster = comparelist, 
+                       fun = enrichGO,
+                       OrgDb= org.Mm.eg.db,
+                       keyType = "ENSEMBL",
+                       ont= "BP",
+                       universe=RESs[[1]]$gene_id)
+dotplot(cclust,showCategory=10)  
+#GSEA with clusterProfiler
+##all of the data is used regardless of arbitrary cut-offs like p-values
+head(GSEA_data[[1]])
+set.seed(123) #RANDOM ORDERING => USE THE SAME SEED  
+gsea_go <- gseGO(geneList = log2FC[[1]],
+                 OrgDb = org.Mm.eg.db,
+                 ont = "BP",
+                 keyType = "SYMBOL",
+                 seed=TRUE)
+enrichplot::upsetplot(gsea_go)
+ggplot(gsea_go, showCategory=10, aes(NES, fct_reorder(Description, NES),
+                                      fill=qvalue)) +
+  geom_col() +
+  geom_vline(xintercept=0, linetype="dashed", color="blue",size=1)+
+  scale_fill_gradientn(colours=c("#b3eebe","#46bac2", "#371ea3"),
+                       guide=guide_colorbar(reverse=TRUE))+
+  scale_x_continuous(expand=c(0,0))+
+  theme_bw() + 
+  #theme(text=element_text(size=8))+
+  xlab("Normalized Enrichment Score") +
+  ylab(NULL) +
+  ggtitle("GSEA with GO")
