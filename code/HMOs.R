@@ -1,7 +1,7 @@
 if (!require("BiocManager", quietly = TRUE))
   install.packages("BiocManager")
 #Paquetes
-list.of.packages = c("tximeta", "tximport", "limma", "edgeR", "tidyverse", "org.Mm.eg.db", "statmod", "pheatmap", "ggplotify", "ggrepel", "SummarizedExperiment", "patchwork", "xlsx", "ragg", "OmnipathR", "clusterProfiler")
+list.of.packages = c("tximeta", "tximport", "limma", "edgeR", "tidyverse", "org.Mm.eg.db", "statmod", "pheatmap", "ggplotify", "ggrepel", "SummarizedExperiment", "patchwork", "xlsx", "ragg", "OmnipathR", "clusterProfiler", "eulerr")
 #Instalación por CRAN o Bioconductor
 new.packages = list.of.packages[!(list.of.packages %in% installed.packages())]
 if(length(new.packages)> 0) {
@@ -60,27 +60,94 @@ fit <- glmQLFit(y, design, method = "ROBUST")
 plotQLDisp(fit)
 pairwisecomb = combn(levels(group), 2, function(x) paste(x[2], "-", x[1], sep = "")); pairwisecomb
 contrast = makeContrasts(contrasts = pairwisecomb, levels=design)
-RESs = vector(length = 9L)
-names(RESs) = colnames(contrast[,c(1:9)])
-for (i in c(1:9)){
+RESs = vector(length = 13L)
+names(RESs) = colnames(contrast[,c(1:9, 10, 34, 41, 32)])
+for (i in c(1:13)){
   RESs[i] = topTags(glmQLFTest(fit, contrast = contrast[,i]), n = Inf)
 }
-DEGs = lapply(RESs, function(i) i %>% dplyr::filter(FDR <=0.05 ) %>% dplyr::select(symbol, gene_name, entrezid, logFC, PValue, FDR))
+DEGs = lapply(RESs, function(i) i %>% dplyr::filter(FDR <=0.05 ) %>% dplyr::select(description, gene_name, entrezid, logFC, PValue, FDR))
 DEGs = DEGs[lapply(DEGs,nrow)>0]
 data = lapply(RESs, function(i) i %>%
          dplyr::mutate(DE = case_when(logFC > 0 & FDR <0.05 ~ "UP",
                                       logFC < 0 & FDR <0.05 ~ "DOWN",
                                       .default = "NO")))
 volcanoplot = function(data, name){
-  ggplot(data = data, aes(x=logFC, y =-log10(PValue), col=DE, label = ifelse(abs(logFC) >= 1 & FDR <0.05, as.character(symbol),  ''))) + geom_point() +
-  geom_text_repel(hjust = 0, nudge_x = 0.1, color = "black") +
+  ggplot(data = data, aes(x=logFC, y =-log10(PValue), col=DE)) + geom_point() +
   scale_color_manual(values = c("DOWN" = "firebrick", "UP" = "dodgerblue", "NO" = "grey")) +
   labs(title = name) +
   theme_minimal()
 }
-head(data)
 plots <- lapply(names(data), function(name) {
   volcanoplot(data[[name]], name)
 })
 combined_plot <- wrap_plots(plots)
 print(combined_plot)
+ggsave("results/volcano.png", scale = 2)
+
+logcpm = cpm(y, log=TRUE)
+rownames(logcpm) = y$genes$symbol #Nombre de genes
+colnames(logcpm) =  paste(y$samples$group, y$samples$names, sep = "-")
+head(logcpm)
+
+DEG_selection = lapply(DEGs, function(i)
+  logcpm[na.omit(i$symbol),])
+
+
+heatmap = function(data, samples, rows, title){
+  as.ggplot(pheatmap(data[c(1:min(rows, 100)),samples], scale = "row", 
+                     clustering_method = "complete",
+                     display_numbers = F,
+                     border_color = NA, cluster_cols = T, cutree_cols = 2, cutree_rows = 2, show_rownames = F,
+                     #annotation_col = annotation, show_rownames = F, annotation_names_col = F,
+                     #annotation_row = setNames(data.frame(Cluster = as.factor(cutree(q$tree_row, k=2))), "Cluster"), 
+                     annotation_names_row = F, main = title,
+                     legend_labels = F,))
+}
+
+
+unlist(lapply(DEG_selection, nrow)))
+
+
+
+heatplots = lapply(names(DEG_selection[unlist(lapply(DEG_selection, is.matrix))]), function(name) {
+  string = str_split_1(name, pattern = "-")
+  cols = grep(paste0("\\b", string, "\\b", collapse = "|"), y$samples$group)
+  heatmap(DEG_selection[[name]], cols, nrow(DEG_selection[[name]]), name)
+  
+})
+
+combined_heatplot <- wrap_plots(heatplots)
+print(combined_heatplot)
+ggsave("results/heatmaps.png", scale = 2)
+
+write.xlsx2(x = res_corrected[!is.na(res_corrected$table$gene_name) & res_corrected$table$PValue <= 0.05 ,c(1,7,13,16,17)], file = paste0(experimento, "/",experimento, ".xlsx"), col.names = T, row.names = F, append = TRUE)
+
+lapply(names(RESs), function(name) {
+  write.xlsx2(x = RESs[[name]][!is.na(RESs[[name]]$gene_name) & RESs[[name]]$PValue <= 0.05, c(1,5,7,13,16,17)],
+              file = "results/genes.xlsx", sheetName = name ,col.names = T, row.names = F, append = TRUE)
+  gc()
+})
+
+lapply(names(DEGs), function(name) {
+  write.xlsx2(x = DEGs[[name]],
+              file = "results/degs.xlsx", sheetName = name ,col.names = T, row.names = F, append = TRUE)
+  gc()
+})
+
+comparisons = tail(names(DEGs),4)
+genes = lapply(DEGs[comparisons], function(i) i[,"gene_name"])
+alldegs = unique(unlist(genes))
+matrix = matrix(nrow = length(alldegs), ncol = 5)
+colnames(matrix) = c("genes", comparisons)
+matrix[,"genes"] = alldegs
+for (i in c(2:5)){
+  matrix[,i] = matrix[,1] %in% genes[[i-1]]
+}
+matrix = as.data.frame(matrix)
+matrix <- matrix %>% mutate(across(c(2:5), as.logical))
+as.ggplot(plot(eulerr::euler(matrix[,2:5]),  quantities = TRUE))
+ggsave("results/eulerr.png")
+common = matrix[which(rowSums(matrix[,c(2:5)]) >1 ),]
+write.xlsx2(x = common, file = "results/comunes.xlsx", col.names = T, row.names = F)
+single =  matrix[which(rowSums(matrix[,c(2:5)]) == 1 ),]
+write.xlsx2(x = single, file = "results/singulares.xlsx", col.names = T, row.names = F)
