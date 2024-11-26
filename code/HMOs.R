@@ -1,7 +1,7 @@
 if (!require("BiocManager", quietly = TRUE))
   install.packages("BiocManager")
 #Paquetes
-list.of.packages = c("tximeta", "tximport", "limma", "edgeR", "tidyverse", "org.Mm.eg.db", "statmod", "pheatmap", "ggplotify", "ggrepel", "SummarizedExperiment", "patchwork", "xlsx", "ragg", "OmnipathR", "clusterProfiler", "eulerr")
+list.of.packages = c("tximeta", "tximport", "limma", "edgeR", "tidyverse", "org.Mm.eg.db", "statmod", "pheatmap", "ggplotify", "ggrepel", "SummarizedExperiment", "patchwork", "xlsx", "ragg", "OmnipathR", "clusterProfiler", "eulerr", "scales", "enrichplot", "GOSemSim")
 #Instalación por CRAN o Bioconductor
 new.packages = list.of.packages[!(list.of.packages %in% installed.packages())]
 if(length(new.packages)> 0) {
@@ -154,17 +154,19 @@ GSEA_data <- lapply(RESs, function(i) i %>% filter(!is.na(FDR)) %>%
 log2FC = lapply(GSEA_data, function(i) i %>%
   pull(logFC, name = gene_name))
 rm(GSEA_data)
+names = make.names(names(RESs))
+lapply(paste0("results/",names), FUN = dir.create)
 #GO enrichment on up-regulated genes. Genes that underwent differential expression testing
-ego <- enrichGO(gene= sig_up[[1]]$gene_name, #OVER-REPRESENTATION TEST
+ego <- enrichGO(gene= sig_down[[1]]$gene_name, #OVER-REPRESENTATION TEST
                 OrgDb= org.Mm.eg.db,
                 keyType = "SYMBOL",
                 ont= "BP",
                 universe=RESs[[1]]$gene_name)
 s_ego<-clusterProfiler::simplify(ego)
-dotplot(s_ego,showCategory=20,font.size=10,label_format=70)+
-  scale_size_continuous(range=c(1, 7))+
-  theme_minimal() +
-  ggtitle("GO Enrichment of up-regulated genes")
+s_ego@result %>%
+  dplyr::select(ID, Description, GeneRatio, BgRatio, pvalue, p.adjust) %>%
+  dplyr::filter(p.adjust < 0.05) %>%
+  write.xlsx2(x = . , file = paste0("results/", names[1], "/DOWNGOBP.xlsx"), col.names = T, row.names = F)
 s_ego %>% filter(p.adjust < 0.05) %>%
   ggplot(showCategory = 20,
          aes(GeneRatio, forcats::fct_reorder(Description, GeneRatio))) + 
@@ -172,34 +174,40 @@ s_ego %>% filter(p.adjust < 0.05) %>%
   geom_point(aes(color=p.adjust, size = Count)) +
   scale_color_viridis_c(guide=guide_colorbar(reverse=TRUE)) +
   scale_size_continuous(range=c(1, 7)) +
+  scale_y_discrete(labels = wrap_format(60)) +
   theme_minimal() + 
   xlab("Gene Ratio") +
   ylab(NULL) + 
-  ggtitle("GO Enrichment of up-regulated genes")
+  ggtitle("GO Enrichment of down-regulated genes")
+ggsave(paste0("results/", names[1], "/GODOWNdotplot.pdf"), bg = "white", scale = 1)
 # color genes by log2 fold changes; create named vector
-foldchanges <- sig_up[[1]]$logFC
-names(foldchanges) <- sig_up[[1]]$gene_name
 
-## by default cnetplot gives the top 5 significant terms 
-#if we want to focus on specific terms we can subset our results
-s_ego2 <- s_ego
-s_ego2@result<-s_ego[c(1,2,3),]
-cnetplot(s_ego2, 
-         foldChange=foldchanges, 
-         shadowtext='gene',
-         cex_label_gene=0.25,
-         cex_label_category=0.5,
-         color_category="purple") 
-kgo <- enrichKEGG(gene = sig_up[[1]]$entrezid,
+kgo <- enrichKEGG(gene = sig_down[[1]]$entrezid,
                   organism = 'mmu',
                   pvalueCutoff  = 0.05,
-                  universe = as.character(RESs[[1]]$entrezid)
-)
-kgo_df<-data.frame(kgo)
-mlist<-list(s_ego,kgo)
-names(mlist)<-c("GO-enrich","KEGG-enrich")
-mresult<-merge_result(mlist)
-dotplot(mresult,showCategory=10)
+                  universe = as.character(RESs[[1]]$entrezid)) %>%
+  mutate(., Description = sub(pattern = " [-] Mus musculus [(]house mouse[)]", "",  x = Description))
+
+kgo %>% filter(p.adjust < 0.05) %>%
+  ggplot(showCategory = 20,
+         aes(GeneRatio, forcats::fct_reorder(Description, GeneRatio))) + 
+  geom_segment(aes(xend=0, yend = Description)) +
+  geom_point(aes(color=p.adjust, size = Count)) +
+  scale_color_viridis_c(guide=guide_colorbar(reverse=TRUE)) +
+  scale_size_continuous(range=c(1, 7)) +
+  scale_y_discrete(labels = wrap_format(60)) +
+  theme_minimal() + 
+  xlab("Gene Ratio") +
+  ylab(NULL) + 
+  ggtitle("KEGG Enrichment of down-regulated genes")
+ggsave(paste0("results/", names[1], "/KEGGDOWNdotplot.pdf"), bg = "white", scale = 1)
+kgo@result %>%
+  dplyr::select(ID, subcategory, Description, GeneRatio, pvalue, p.adjust) %>%
+  dplyr::filter(p.adjust < 0.05) %>%
+  write.xlsx2(x = . , file = paste0("results/", names[1], "/DOWNkegg.xlsx"), col.names = T, row.names = F)
+pairwise_termsim(s_ego, method = "Wang", semData = godata('org.Mm.eg.db', ont="BP")) %>%
+  treeplot(showCategory = 20, label_format_tiplab = 40)
+ggsave(paste0("results/", names[1], "/GODOWNtreeplot.pdf"), bg = "white", scale = 1.5)
 ##Merge Up & Down
 comparelist<-list(sig_down[[1]]$gene_id,sig_up[[1]]$gene_id)
 names(comparelist)<-c("down-regulated","up-regulated") 
@@ -209,21 +217,24 @@ cclust<-compareCluster(geneCluster = comparelist,
                        keyType = "ENSEMBL",
                        ont= "BP",
                        universe=RESs[[1]]$gene_id)
-dotplot(cclust,showCategory=10)  
+options(enrichplot.colours = c("firebrick","dodgerblue"))
+dotplot(cclust,showCategory=10, label_format = 50)
+ggsave(paste0("results/", names[1], "/comparedplot.pdf"), bg = "white", scale = 1)
 #GSEA with clusterProfiler
 ##all of the data is used regardless of arbitrary cut-offs like p-values
-head(GSEA_data[[1]])
 set.seed(123) #RANDOM ORDERING => USE THE SAME SEED  
 gsea_go <- gseGO(geneList = log2FC[[1]],
                  OrgDb = org.Mm.eg.db,
                  ont = "BP",
                  keyType = "SYMBOL",
                  seed=TRUE)
-enrichplot::upsetplot(gsea_go)
-ggplot(gsea_go, showCategory=10, aes(NES, fct_reorder(Description, NES),
+gsea_go@result %>%
+  dplyr::select(ID, Description, enrichmentScore, NES, pvalue, p.adjust) %>%
+  write.xlsx2(x = . , file = paste0("results/", names[1], "/GSEA.xlsx"), col.names = T, row.names = F)
+ggplot(gsea_go, showCategory=20, aes(NES, fct_reorder(Description, NES),
                                       fill=qvalue)) +
   geom_col() +
-  geom_vline(xintercept=0, linetype="dashed", color="blue",size=1)+
+  geom_vline(xintercept=0, linetype="dashed", color="black",size=1)+
   scale_fill_gradientn(colours=c("#b3eebe","#46bac2", "#371ea3"),
                        guide=guide_colorbar(reverse=TRUE))+
   scale_x_continuous(expand=c(0,0))+
@@ -232,3 +243,7 @@ ggplot(gsea_go, showCategory=10, aes(NES, fct_reorder(Description, NES),
   xlab("Normalized Enrichment Score") +
   ylab(NULL) +
   ggtitle("GSEA with GO")
+ggsave(paste0("results/", names[1], "/GSEAGO.pdf"), bg = "white", scale = 1)
+pairwise_termsim(gsea_go, method = "Wang", semData = godata('org.Mm.eg.db', ont="BP")) %>%
+  treeplot(showCategory = 20, label_format_tiplab = 40)
+ggsave(paste0("results/", names[1], "/GSEAtree.pdf"), bg = "white", scale = 1.5)
