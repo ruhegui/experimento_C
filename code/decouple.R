@@ -18,7 +18,7 @@ colnames(Logcpm)
 designmetadata = y$samples[,c(4,1)]
 designmetadata
 #DEG
-deg = DEGs[[1]][!duplicated(DEGs[[1]]$gene_name),] %>%
+deg = DEGs[[10]][!duplicated(DEGs[[10]]$gene_name),] %>%
   dplyr::select(gene_name, logFC, PValue) %>%
   filter(!is.na(gene_name)) %>%
   mutate(., t = -log10(PValue) * logFC)
@@ -100,14 +100,14 @@ ggplot(f_contrast_acts, aes(x = reorder(source, score), y = score)) +
         panel.grid.major = element_blank(), 
         panel.grid.minor = element_blank()) +
   xlab("TFs")
-ggsave(paste0("results/", names[1], "/TFscore.pdf"), bg = "white", scale = 1)
+ggsave(paste0("results/", names[10], "/TFscore.pdf"), bg = "white", scale = 1)
 contrast_acts %>%
   arrange(p_value) %>%
-  dplyr::select(source, score, p_value) %>%
-  write.xlsx2(x = . , file = paste0("results/", names[1], "/TFs.xlsx"), col.names = T, row.names = F)
+  dplyr::select(source, score, p_value) %>% 
+  write.xlsx2(x = . , file = paste0("results/", names[9], "/TFs.xlsx"), col.names = T, row.names = F)
 # visualize the most differential target genes in each TF along their p-values to interpret the results.
 #For example, let’s see the genes that are belong to SP1:
-tf <- 'CDX2'
+tf <- 'TFE3'
 
 df <- net %>%
   filter(source == tf) %>%
@@ -175,7 +175,6 @@ pheatmap(sample_acts_mat1, border_color = NA, color=my_color, breaks = my_breaks
 contrast_acts1 <- run_mlm(mat=degpath, net=netpath, .source='source', .target='target',
                           .mor='weight', minsize = 5)
 contrast_acts1
-
 # Plot
 ggplot(contrast_acts1, aes(x = reorder(source, score), y = score)) + 
   geom_bar(aes(fill = score), stat = "identity") +
@@ -189,11 +188,11 @@ ggplot(contrast_acts1, aes(x = reorder(source, score), y = score)) +
         panel.grid.major = element_blank(), 
         panel.grid.minor = element_blank()) +
   xlab("Pathways")
-ggsave(paste0("results/", names[1], "/Pathwayscore.pdf"), bg = "white", scale = 1)
+ggsave(paste0("results/", names[2], "/Pathwayscore.pdf"), bg = "white", scale = 1)
 contrast_acts1 %>%
   arrange(p_value) %>%
   dplyr::select(source, score, p_value) %>%
-  write.xlsx2(x = . , file = paste0("results/", names[1], "/pathways.xlsx"), col.names = T, row.names = F)
+  write.xlsx2(x = . , file = paste0("results/", names[2], "/pathways.xlsx"), col.names = T, row.names = F)
 
 #Especificas
 pathway <- 'NFkB'
